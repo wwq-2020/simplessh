@@ -148,6 +148,12 @@ simplessh d 0
 simplessh d test
 
 
+#### 显示具体配置
 
+通过序号显示
 
+simplessh i 0
 
+通过别名显示
+
+simplessh i test
