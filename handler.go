@@ -29,7 +29,8 @@ var (
 	lReg     = regexp.MustCompile(`^l$`)
 	dReg     = regexp.MustCompile(`^d (\d+|[\s\S]+|all)$`)
 	emptyReg = regexp.MustCompile(`^\s?$`)
-	addrReg  = regexp.MustCompile(`\d+\.\d+\.\d+\.\d+:\d+`)
+	addrReg  = regexp.MustCompile(`^\d+\.\d+\.\d+\.\d+:\d+$`)
+	ipReg    = regexp.MustCompile(`^\d+\.\d+\.\d+\.\d+$`)
 	userReg  = regexp.MustCompile(`^\w+$`)
 	pwdReg   = regexp.MustCompile(`^[\s\S]+$`)
 )
@@ -105,7 +106,7 @@ func (h *nHandler) handle() bool {
 		io.WriteString(os.Stdout, "invalid cfg\n")
 		return false
 	}
-	cfg, goOn := h.collectInfo()
+	cfg, goOn := h.collectInfo(false)
 	if cfg != nil {
 		cfgs = append(cfgs, cfg)
 		storeCfgs()
@@ -114,30 +115,30 @@ func (h *nHandler) handle() bool {
 
 }
 
-func (h *nHandler) collectInfo() (*config, bool) {
+func (h *nHandler) collectInfo(nullable bool) (*config, bool) {
 	r := bufio.NewReader(os.Stdin)
 	for {
-		if !h.getAddr(r) {
+		if !h.getAddr(r, nullable) {
 			return nil, false
 		}
-		if !h.getUser(r) {
+		if !h.getUser(r, nullable) {
 			return nil, false
 		}
-		if !h.getPwd(r) {
+		if !h.getPwd(r, nullable) {
 			return nil, false
 		}
-		if !h.getAlias(r) {
+		if !h.getAlias(r, nullable) {
 			return nil, false
 		}
 		cfg := h.genCfg()
-		if tryConnect(cfg) {
+		if tryConnect(cfg) || nullable {
 			return cfg, true
 		}
 
 	}
 }
 
-func (h *nHandler) getAddr(r *bufio.Reader) bool {
+func (h *nHandler) getAddr(r *bufio.Reader, nullable bool) bool {
 	for {
 		io.WriteString(os.Stdout, "addr:(192.168.1.100:22) ")
 		line, _, err := r.ReadLine()
@@ -148,10 +149,17 @@ func (h *nHandler) getAddr(r *bufio.Reader) bool {
 			h.addr = string(line)
 			return true
 		}
+		if ipReg.Match(line) {
+			h.addr = fmt.Sprintf("%s:22", string(line))
+			return true
+		}
+		if nullable {
+			return true
+		}
 	}
 }
 
-func (h *nHandler) getUser(r *bufio.Reader) bool {
+func (h *nHandler) getUser(r *bufio.Reader, nullable bool) bool {
 	for {
 		io.WriteString(os.Stdout, "user:(default root) ")
 		line, _, err := r.ReadLine()
@@ -162,13 +170,15 @@ func (h *nHandler) getUser(r *bufio.Reader) bool {
 			h.user = string(line)
 			return true
 		}
-
+		if nullable {
+			return true
+		}
 		h.user = "root"
 		return true
 	}
 }
 
-func (h *nHandler) getPwd(r *bufio.Reader) bool {
+func (h *nHandler) getPwd(r *bufio.Reader, nullable bool) bool {
 	for {
 		io.WriteString(os.Stdout, "password: ")
 		line, _, err := r.ReadLine()
@@ -179,10 +189,13 @@ func (h *nHandler) getPwd(r *bufio.Reader) bool {
 			h.pwd = string(line)
 			return true
 		}
+		if nullable {
+			return true
+		}
 	}
 }
 
-func (h *nHandler) getAlias(r *bufio.Reader) bool {
+func (h *nHandler) getAlias(r *bufio.Reader, nullable bool) bool {
 	for {
 		io.WriteString(os.Stdout, "alias: ")
 		line, _, err := r.ReadLine()
@@ -291,11 +304,14 @@ func (h *uHandler) handle() bool {
 		return false
 	}
 
-	cfg, goOn := h.nHandler.collectInfo()
-	if cfg != nil {
-		*h.cfg = *cfg
-		storeCfgs()
+	cfg, goOn := h.nHandler.collectInfo(true)
+	cfg = mergeCfg(h.cfg, cfg)
+	if !tryConnect(cfg) {
+		io.WriteString(os.Stdout, "invalid cfg\n")
+		return goOn
 	}
+	*h.cfg = *cfg
+	storeCfgs()
 	return goOn
 
 }
@@ -451,4 +467,24 @@ func getHandler(line string) handler {
 		}
 	}
 	return &hHandler{}
+}
+
+func mergeCfg(src, dst *config) *config {
+	result := &config{}
+	*result = *src
+
+	if dst.Addr != "" {
+		result.Addr = dst.Addr
+	}
+	if dst.Alias != "" {
+		result.Alias = dst.Alias
+	}
+	if dst.Pwd != "" {
+		result.Pwd = dst.Pwd
+	}
+	if dst.User != "" {
+		result.User = dst.User
+	}
+
+	return result
 }
